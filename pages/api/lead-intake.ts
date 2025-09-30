@@ -14,10 +14,13 @@ const DEFAULT_TAGS    = (process.env.DEFAULT_TAGS || 'Georgia Blu,New Developmen
 const FORCE_ASSIGNEE_ID = process.env.FORCE_ASSIGNEE_ID; // optional
 
 function setCORS(res: VercelResponse, origin?: string) {
-  const allow = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0] || '*';
-  res.setHeader('Access-Control-Allow-Origin', allow);
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  const list = ALLOWED_ORIGINS;
+  const allowAny = list.includes('*');
+  const allowThis = origin && (allowAny || list.includes(origin));
+  res.setHeader("Access-Control-Allow-Origin", allowThis ? (origin as string) : "*");
+  res.setHeader("Vary", "Origin");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -25,6 +28,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   if (!LOFTY_API_KEY) return res.status(500).json({ error: 'Missing LOFTY_API_KEY env var' });
+
+  console.log("lead-intake request", {
+  method: req.method,
+  origin: req.headers.origin,
+  referer: req.headers.referer
+});
+
 
   try {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
