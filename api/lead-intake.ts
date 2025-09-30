@@ -81,21 +81,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Need first name and (email or phone)' });
     }
 
-    // ====== Lofty payload (flat) ======
-    const payload = stripUndefined({
-      first_name: String(firstName).trim(),
-      last_name:  String(lastName || '').trim() || undefined,
-      email:      String(email || '').trim() || undefined,
-      phone:      String(phone || '').trim() || undefined,
-      source:     String(source).trim(),
-      tags:       [...DEFAULT_TAGS, ...tags].map(s => String(s).trim()).filter(Boolean),
-      notes:      message ? String(message).trim() : ''
-    });
+// Build the Lofty payload using camelCase keys
+const payload = {
+  firstName: String(firstName || '').trim(),
+  lastName:  String(lastName  || '').trim() || undefined,
+  email:     String(email     || '').trim() || undefined,
+  phone:     String(phone     || '').trim() || undefined,
+  source:    String(source    || '').trim(),
+  tags:      Array.isArray(tags) ? tags.map(s => String(s).trim()).filter(Boolean) : [],
+  notes:     message ? String(message).trim() : ''
+};
 
-    if (FORCE_ASSIGNEE_ID) (payload as any).assignee_id = FORCE_ASSIGNEE_ID;
+// strip undefined so we don't send empty keys
+Object.keys(payload).forEach(k => (payload as any)[k] === undefined && delete (payload as any)[k]);
 
-    // Debug log (remove later if you like)
-    console.log('→ Lofty payload (flat)', payload);
+console.log('→ Lofty payload (camelCase)', payload);
+
+const r = await fetch(`${LOFTY_API_BASE}/leads`, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    // If your Lofty docs say "Bearer", use Bearer. If they say "token", keep token.
+    'Authorization': `token ${LOFTY_API_KEY}`
+  },
+  body: JSON.stringify(payload)
+});
 
     // ====== Send to Lofty ======
     const r = await fetch(`${LOFTY_API_BASE}/leads`, {
