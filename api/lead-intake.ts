@@ -49,31 +49,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Need firstName (or Name) and (email/Email or phone/Phone)' });
     }
 
-    // Build Lofty payload
-    const payload: Record<string, any> = {
-      first_name: String(firstName).trim(),
-      last_name: String(lastName || '').trim(),
-      source: String(source).trim(),
-      tags: [...DEFAULT_TAGS, ...tags].filter(Boolean),
-      notes: message ? String(message).trim() : '',
-      emails: email ? [{ address: String(email).trim(), type: 'personal' }] : [],
-      phones: phone ? [{ number: String(phone).trim(), type: 'mobile' }] : []
-    };
-    if (FORCE_ASSIGNEE_ID) payload.assignee_id = FORCE_ASSIGNEE_ID;
+// ...keep your imports, env, setCORS, and normalization above...
 
-    const r = await fetch(`${LOFTY_API_BASE}/leads`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `token ${LOFTY_API_KEY}` },
-      body: JSON.stringify(payload)
-    });
+// inside handler, after we derived: firstName, lastName, email, phone, message, source, tags
+const payload = {
+  first_name: String(firstName || '').trim(),
+  last_name:  String(lastName  || '').trim(),
+  email:      String(email     || '').trim() || undefined,
+  phone:      String(phone     || '').trim() || undefined,
+  source:     String(source    || '').trim(),
+  tags:       Array.isArray(tags) ? tags.map(String).map(s=>s.trim()).filter(Boolean) : [],
+  notes:      message ? String(message).trim() : ''
+};
 
-    const text = await r.text();
-    if (!r.ok) return res.status(502).json({ error: 'Lofty API error', detail: text });
+// OPTIONAL: strip undefined keys so we don't send nulls/empties
+Object.keys(payload).forEach(k => (payload as any)[k] === undefined && delete (payload as any)[k]);
 
-    let data: any = {};
-    try { data = JSON.parse(text); } catch {}
-    return res.status(200).json({ ok: true, loftyLeadId: data?.id || null });
-  } catch (err: any) {
-    return res.status(500).json({ error: 'Server error', detail: String(err?.message || err) });
+// TEMP: log what we send (remove after testing)
+console.log('→ Lofty payload (flat)', payload);
+
+const r = await fetch(`${LOFTY_API_BASE}/leads`, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': `token ${LOFTY_API_KEY}`
+  },
+  body: JSON.stringify(payload)
+});
+
+const text = await r.text();
+if (!r.ok) {
+  console.error('Lofty error', text);
+  return res.status(502).json({ error: 'Lofty API error', detail: text });
+}
+
+let data: any = {};
+try { data = JSON.parse(text); } catch {}
+return res.status(200).json({ ok: true, loftyLeadId: data?.id || null });
+
   }
 }
