@@ -1,134 +1,46 @@
-// api/lead-intake.ts — Vercel Serverless Function (TypeScript)
-// Route: /api/lead-intake
-
+// api/lead-intake.ts — Minimal echo to isolate crash
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-// ====== ENV ======
-const LOFTY_API_BASE = process.env.LOFTY_API_BASE || 'https://api.lofty.com/v1.0';
-const LOFTY_API_KEY  = process.env.LOFTY_API_KEY || '';
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '*')
-  .split(',')
-  .map(s => s.trim())
-  .filter(Boolean);
+  .split(',').map(s => s.trim()).filter(Boolean);
 
-const DEFAULT_SOURCE = process.env.DEFAULT_SOURCE || 'Website: Georgia Blu Info Form';
-const DEFAULT_TAGS   = (process.env.DEFAULT_TAGS || 'Georgia Blu,New Development Leads')
-  .split(',')
-  .map(s => s.trim())
-  .filter(Boolean);
-
-const FORCE_ASSIGNEE_ID = process.env.FORCE_ASSIGNEE_ID; // optional
-
-// ====== CORS ======
 function setCORS(res: VercelResponse, origin?: string) {
-  const allowAny  = ALLOWED_ORIGINS.includes('*');
+  const allowAny = ALLOWED_ORIGINS.includes('*');
   const allowThis = origin && (allowAny || ALLOWED_ORIGINS.includes(origin));
   res.setHeader('Access-Control-Allow-Origin', allowThis ? (origin as string) : '*');
-  res.setHeader('Vary', 'Origin'); // important for edge caching correctness
+  res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
 
-// ====== Helpers ======
-function stripUndefined<T extends Record<string, any>>(obj: T): T {
-  Object.keys(obj).forEach(k => obj[k] === undefined && delete obj[k]);
-  return obj;
-}
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  setCORS(res, req.headers.origin as string);
-
-  // Preflight
-  if (req.method === 'OPTIONS') return res.status(204).end();
-
-  // Only POST
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-
-  // Guard: API key
-  if (!LOFTY_API_KEY) return res.status(500).json({ error: 'Missing LOFTY_API_KEY env var' });
-
-  // Log basic request context (safe)
-  console.log('lead-intake request', {
-    method: req.method,
-    origin: req.headers.origin,
-    referer: req.headers.referer
-  });
-
   try {
-    // Parse body (JSON string or object)
-    const raw = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
+    setCORS(res, req.headers.origin as string);
+    if (req.method === 'OPTIONS') return res.status(204).end();
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-    // Accept multiple naming styles (Lofty blocks, your forms, FormSubmit fallbacks)
+    const raw = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
     const firstName = raw.firstName ?? raw.FirstName ?? raw.Name ?? raw.name ?? '';
     const lastName  = raw.lastName  ?? raw.LastName  ?? '';
     const email     = raw.email     ?? raw.Email     ?? '';
     const phone     = raw.phone     ?? raw.Phone     ?? '';
     const message   = raw.message   ?? raw.Message   ?? '';
-    const hp        = raw.hp        ?? raw._honey    ?? ''; // honeypot
-    const source    = (raw.source ?? DEFAULT_SOURCE) as string;
+    const source    = raw.source    ?? 'Website: Georgia Blu Info Form';
+    const hp        = raw.hp ?? raw._honey ?? '';
 
-    // tags may come as tags (array or string) or 'tags[]'
     let tags: string[] = [];
     const tagsInput = raw.tags ?? raw['tags[]'];
     if (Array.isArray(tagsInput)) tags = tagsInput.map(String);
     else if (typeof tagsInput === 'string') tags = [tagsInput];
 
-    // Bot trap: if honeypot touched, pretend success
-    if (hp) return res.status(200).json({ ok: true });
+    if (hp) return res.status(200).json({ ok: true, skipped: 'honeypot' });
 
-    // Minimal validation
-    if (!String(firstName).trim() || (!String(email).trim() && !String(phone).trim())) {
-      return res.status(400).json({ error: 'Need first name and (email or phone)' });
-    }
-
-// Build the Lofty payload using camelCase keys
-const payload = {
-  firstName: String(firstName || '').trim(),
-  lastName:  String(lastName  || '').trim() || undefined,
-  email:     String(email     || '').trim() || undefined,
-  phone:     String(phone     || '').trim() || undefined,
-  source:    String(source    || '').trim(),
-  tags:      Array.isArray(tags) ? tags.map(s => String(s).trim()).filter(Boolean) : [],
-  notes:     message ? String(message).trim() : ''
-};
-
-// strip undefined so we don't send empty keys
-Object.keys(payload).forEach(k => (payload as any)[k] === undefined && delete (payload as any)[k]);
-
-console.log('→ Lofty payload (camelCase)', payload);
-
-const r = await fetch(`${LOFTY_API_BASE}/leads`, {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    // If your Lofty docs say "Bearer", use Bearer. If they say "token", keep token.
-    'Authorization': `token ${LOFTY_API_KEY}`
-  },
-  body: JSON.stringify(payload)
-});
-
-    // ====== Send to Lofty ======
-    const r = await fetch(`${LOFTY_API_BASE}/leads`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        // If Lofty expects "Bearer", swap to `Bearer ${LOFTY_API_KEY}`
-        'Authorization': `token ${LOFTY_API_KEY}`
-      },
-      body: JSON.stringify(payload)
+    return res.status(200).json({
+      ok: true,
+      normalized: { firstName, lastName, email, phone, message, source, tags }
     });
-
-    const text = await r.text();
-    if (!r.ok) {
-      console.error('Lofty error', text);
-      return res.status(502).json({ error: 'Lofty API error', detail: text });
-    }
-
-    let data: any = {};
-    try { data = JSON.parse(text); } catch {}
-    return res.status(200).json({ ok: true, loftyLeadId: data?.id ?? null });
   } catch (err: any) {
-    console.error('lead-intake server error:', err);
-    return res.status(500).json({ error: 'Server error', detail: String(err?.message || err) });
+    console.error('echo handler crash:', err);
+    return res.status(500).json({ error: 'Echo crash', detail: String(err?.message || err) });
   }
 }
